@@ -1,0 +1,12 @@
+AlignEscapedNewlines: DontAlign
+BasedOnStyle: LLVM
+BinPackArguments: false
+BinPackParameters: false
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeBraces: Custom
+BraceWrapping:
+    AfterFunction: true
+    BeforeElse: true
+ColumnLimit: 100
+PointerAlignment: Left
+SpacesBeforeTrailingComments: 2
