@@ -183,10 +183,8 @@ static void handle_event(struct libevdev_uinput* uinput_dev, struct input_event*
       return;
     }
 
-    // No mapping found; if caps lock is pressed, just eat up the event
     if (kbd_state.caps_lock_pressed) {
       kbd_state.key_pressed_while_caps_lock_pressed |= ev->value == 1;
-      return;
     }
   }
 
