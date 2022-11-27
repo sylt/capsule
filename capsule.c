@@ -64,6 +64,8 @@ static struct {
   int inotify_fd;
   int inotify_wd;
 
+  bool swap_caps_lock_and_escape;
+
   struct keyboard {
     struct {
       bool grabbed;
@@ -264,6 +266,11 @@ static void handle_input_event(struct keyboard* keyboard, struct input_event* ev
     goto forward_event;
   }
 
+  if (capsule.swap_caps_lock_and_escape && ev->code == KEY_ESC) {
+    ev->code = KEY_CAPSLOCK;
+    goto forward_event;
+  }
+
   if (ev->code == KEY_CAPSLOCK) {
     if (ev->value > 1) {  // Key repeat
       return;
@@ -279,48 +286,48 @@ static void handle_input_event(struct keyboard* keyboard, struct input_event* ev
       return;
     }
 
-    // We want to activate caps-lock, since no other key was pressed while it was held down
-    write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_CAPSLOCK, 1);
+    const unsigned int key = capsule.swap_caps_lock_and_escape ? KEY_ESC : KEY_CAPSLOCK;
+    write_event_to_uinput(keyboard->uinput_dev, EV_KEY, key, 1);
     write_event_to_uinput(keyboard->uinput_dev, EV_KEY, EV_SYN, 0);
-    // ... and then we simply forward the deactivation
+    write_event_to_uinput(keyboard->uinput_dev, EV_KEY, key, 0);
+    return;
   }
-  else {
-    for (size_t i = 0; i < ARRAY_SIZE(action_table); i++) {
-      if (action_table[i].code != ev->code) {
-        continue;
-      }
 
-      // From this line on, we have a match, but first handle some cases where we back off
-      if (ev->value == 1 && !keyboard->state.caps_lock_pressed) {
-        goto forward_event;  // Key was pressed "normally", without caps lock held in
-      }
-
-      if (ev->value != 1 && !keyboard->state.action_table_activated[i]) {
-        goto forward_event;  // Key was pressed while caps lock wasn't held, so treat normally
-      }
-
-      // From here on, we know we should do something
-      if (action_table[i].output.right_alt && ev->value <= 1) {
-        write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_RIGHTALT, ev->value);
-      }
-      if (action_table[i].output.left_ctrl && ev->value <= 1) {
-        write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_LEFTCTRL, ev->value);
-      }
-      write_event_to_uinput(keyboard->uinput_dev, EV_KEY, action_table[i].output.code, ev->value);
-
-      // Something was done, and that's worth book keeping
-      if (ev->value <= 1) {
-        const bool activated = (ev->value == 1 && keyboard->state.caps_lock_pressed);
-        keyboard->state.action_table_activated[i] = activated;
-        keyboard->state.key_pressed_while_caps_lock_pressed |= activated;
-      }
-
-      return;
+  for (size_t i = 0; i < ARRAY_SIZE(action_table); i++) {
+    if (action_table[i].code != ev->code) {
+      continue;
     }
 
-    if (keyboard->state.caps_lock_pressed) {
-      keyboard->state.key_pressed_while_caps_lock_pressed |= ev->value == 1;
+    // From this line on, we have a match, but first handle some cases where we back off
+    if (ev->value == 1 && !keyboard->state.caps_lock_pressed) {
+      goto forward_event;  // Key was pressed "normally", without caps lock held in
     }
+
+    if (ev->value != 1 && !keyboard->state.action_table_activated[i]) {
+      goto forward_event;  // Key was pressed while caps lock wasn't held, so treat normally
+    }
+
+    // From here on, we know we should do something
+    if (action_table[i].output.right_alt && ev->value <= 1) {
+      write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_RIGHTALT, ev->value);
+    }
+    if (action_table[i].output.left_ctrl && ev->value <= 1) {
+      write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_LEFTCTRL, ev->value);
+    }
+    write_event_to_uinput(keyboard->uinput_dev, EV_KEY, action_table[i].output.code, ev->value);
+
+    // Something was done, and that's worth book keeping
+    if (ev->value <= 1) {
+      const bool activated = (ev->value == 1 && keyboard->state.caps_lock_pressed);
+      keyboard->state.action_table_activated[i] = activated;
+      keyboard->state.key_pressed_while_caps_lock_pressed |= activated;
+    }
+
+    return;
+  }
+
+  if (keyboard->state.caps_lock_pressed) {
+    keyboard->state.key_pressed_while_caps_lock_pressed |= ev->value == 1;
   }
 
 forward_event:
