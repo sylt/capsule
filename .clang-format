@@ -8,5 +8,6 @@ BraceWrapping:
     AfterFunction: true
     BeforeElse: true
 ColumnLimit: 100
+ForEachMacros: ['FOR_EACH_KEYBOARD']
 PointerAlignment: Left
 SpacesBeforeTrailingComments: 2

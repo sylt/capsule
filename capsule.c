@@ -119,7 +119,9 @@ static bool init_capsule(void)
   capsule.inotify_fd = -1;
   capsule.inotify_wd = -1;
 
-  FOR_EACH_KEYBOARD(keyboard) { close_keyboard(keyboard); }
+  FOR_EACH_KEYBOARD (keyboard) {
+    close_keyboard(keyboard);
+  }
 
   capsule.dev_dirp = opendir(INPUT_DEVICE_PATH);
   if (!capsule.dev_dirp) {
@@ -145,8 +147,7 @@ static bool init_capsule(void)
 
 static struct keyboard* find_keyboard_by_inode(ino_t inode)
 {
-  FOR_EACH_KEYBOARD(keyboard)
-  {
+  FOR_EACH_KEYBOARD (keyboard) {
     if (keyboard->inode == inode) {
       return keyboard;
     }
@@ -156,8 +157,7 @@ static struct keyboard* find_keyboard_by_inode(ino_t inode)
 
 static struct keyboard* find_free_keyboard_struct(void)
 {
-  FOR_EACH_KEYBOARD(keyboard)
-  {
+  FOR_EACH_KEYBOARD (keyboard) {
     if (!keyboard->dev) {
       assert(!keyboard->uinput_dev);
       return keyboard;
@@ -205,7 +205,9 @@ done:
 
 static bool scan_keyboards(void)
 {
-  FOR_EACH_KEYBOARD(keyboard) { keyboard->state.marked_for_deletion = (keyboard->dev != NULL); }
+  FOR_EACH_KEYBOARD (keyboard) {
+    keyboard->state.marked_for_deletion = (keyboard->dev != NULL);
+  }
 
   rewinddir(capsule.dev_dirp);
 
@@ -231,8 +233,7 @@ static bool scan_keyboards(void)
   }
 
   size_t num_keyboards_setup = 0;
-  FOR_EACH_KEYBOARD(keyboard)
-  {
+  FOR_EACH_KEYBOARD (keyboard) {
     if (keyboard->state.marked_for_deletion) {
       close_keyboard(keyboard);
     }
@@ -357,8 +358,7 @@ static size_t construct_pollfd_array(struct pollfd* pfds, size_t pfds_size)
   pfds_size--;
 
   size_t remaining = pfds_size;
-  FOR_EACH_KEYBOARD(keyboard)
-  {
+  FOR_EACH_KEYBOARD (keyboard) {
     if (remaining == 0) {
       ERROR("Bad sizing of pollfd array");
       break;
@@ -411,8 +411,7 @@ static bool handle_keyboard_evdev_event(struct keyboard* keyboard)
 static void grab_all_keyboards(void)
 {
   // Grab devices to remove duplicate events (i.e., 1 from real device + 1 from virtual device)
-  FOR_EACH_KEYBOARD(keyboard)
-  {
+  FOR_EACH_KEYBOARD (keyboard) {
     if (keyboard->dev && !keyboard->state.grabbed) {
       keyboard->state.grabbed = libevdev_grab(keyboard->dev, LIBEVDEV_GRAB) == 0;
     }
@@ -495,7 +494,9 @@ int main(int argc, char* argv[])
   run_event_loop();
 
 done:
-  FOR_EACH_KEYBOARD(keyboard) { close_keyboard(keyboard); }
+  FOR_EACH_KEYBOARD (keyboard) {
+    close_keyboard(keyboard);
+  }
 
   if (capsule.dev_dirp) {
     closedir(capsule.dev_dirp);
