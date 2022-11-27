@@ -472,7 +472,12 @@ done:
 
 static void print_usage(void)
 {
-  fprintf(stderr, "Usage: %s [--debug] [path-to-keyboard-input-device]\n", program_invocation_name);
+  fprintf(stderr,
+          "Usage: %s"
+          " [--swap-caps-lock-and-escape]"
+          " [--debug]"
+          "\n",
+          program_invocation_name);
 }
 
 int main(int argc, char* argv[])
@@ -483,14 +488,31 @@ int main(int argc, char* argv[])
     return -1;
   }
 
-  if (argc > 1 && strcmp("--debug", argv[1]) == 0) {
-    log_level = LOG_LEVEL_DEBUG;
-    argc--;
-    argv++;
-  }
-
   if (!init_capsule()) {
     goto done;
+  }
+
+  while (argc > 1) {
+    if (strcmp("-h", argv[1]) == 0 || strcmp("-help", argv[1]) == 0
+        || strcmp("--help", argv[1]) == 0) {
+      print_usage();
+      return 0;
+    }
+
+    if (strcmp("--debug", argv[1]) == 0) {
+      log_level = LOG_LEVEL_DEBUG;
+    }
+    else if (strcmp("--swap-caps-lock-and-escape", argv[1]) == 0) {
+      capsule.swap_caps_lock_and_escape = true;
+    }
+    else {
+      ERROR("Unrecognized switch: %s", argv[1]);
+      print_usage();
+      return -1;
+    }
+
+    argc--;
+    argv++;
   }
 
   if (!scan_keyboards()) {
