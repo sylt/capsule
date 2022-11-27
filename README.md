@@ -22,6 +22,8 @@ having only some hard-coded aliases. These aliases are:
 | K   | Arrow Up    |
 | L   | Arrow Right |
 |     |             |
+| D   | Delete      |
+|     |             |
 | N   | PageDown    |
 | P   | PageUp      |
 
@@ -30,8 +32,10 @@ stack. Due to this, the keyboard shortcuts are global, meaning that
 you can use them from whatever application without any extra set up:
 Your browser, your editor, or your chat program.
 
-As CAPSULE is only a few hours old, bugs might lurk. To force it to
-quit, press both left and right control buttons at once.
+It should be noted that CAPSULE works the same when holding down say
+the Control or Alt key. So, for example, if you hold down the Caps
+Lock and Alt key while pressing down H, it will produce the same
+result as pressing Alt + Arrow Right. This is a feature.
 
 # How to compile and run
 
@@ -48,8 +52,6 @@ wrong one is picked.
 
 Lots, but on top of my mind:
 
-* Multiple keyboard support - Very common with a docking station set-up
-* Plug'n'Play support - Again, very valid docking station use-case
 * Config file support - Can't keep it hard-coded forever
 * Alternative function for activating Caps Lock. Perhaps people want
   to use it as an extra escape key instead, and scrap Caps Lock all

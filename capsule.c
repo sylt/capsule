@@ -1,3 +1,5 @@
+#include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libevdev/libevdev-uinput.h>
@@ -7,18 +9,24 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/inotify.h>
 #include <unistd.h>
 
 #define ERROR(fmt, ...) fprintf(stderr, "Error: " fmt "\n", ##__VA_ARGS__);
+#define WARNING(fmt, ...) fprintf(stderr, "Warning: " fmt "\n", ##__VA_ARGS__);
 #define DEBUG(fmt, ...) \
   if (log_level >= LOG_LEVEL_DEBUG) \
-  printf("Info: " fmt "\n", ##__VA_ARGS__)
+  printf("Debug [%s]: " fmt " [%s:%d]\n", __func__, ##__VA_ARGS__, __FILE__, __LINE__)
+
 #define ARRAY_SIZE(some_array) (sizeof(some_array) / sizeof((some_array)[0]))
+
+#define INPUT_DEVICE_PATH "/dev/input/by-path"
 
 static enum {
   LOG_LEVEL_ERROR,
+  LOG_LEVEL_WARNING,
   LOG_LEVEL_DEBUG,
-} log_level = LOG_LEVEL_ERROR;
+} log_level = LOG_LEVEL_WARNING;
 
 static const struct {
   const uint16_t code;  // If Caps Lock is pressed, try match with this key code
@@ -52,63 +60,189 @@ static const struct {
 };
 
 static struct {
-  bool caps_lock_pressed;
+  DIR* dev_dirp;  // Base dir of where we find/monitor for keyboard devices
+  int inotify_fd;
+  int inotify_wd;
 
-  bool key_pressed_while_caps_lock_pressed;
-  bool action_table_activated[ARRAY_SIZE(action_table)];
-} kbd_state;
+  struct keyboard {
+    struct {
+      bool grabbed;
+      bool caps_lock_pressed;
 
-static struct libevdev* open_device(const char* path)
+      bool key_pressed_while_caps_lock_pressed;
+      bool action_table_activated[ARRAY_SIZE(action_table)];
+
+      bool marked_for_deletion;  // Used for detecting when keyboard has been unplugged
+    } state;
+
+    ino_t inode;
+    int event_fd;
+    struct libevdev* dev;
+    struct libevdev_uinput* uinput_dev;
+  } keyboards[16];  // Should be enough for anybody
+} capsule;
+
+#define POLLFDS_MAX_NUM_FDS (ARRAY_SIZE(capsule.keyboards) + 1 /*inotify_fd*/)
+
+#define FOR_EACH_KEYBOARD(kbd) \
+  for (struct keyboard* kbd = &capsule.keyboards[0]; \
+       kbd < &capsule.keyboards[ARRAY_SIZE(capsule.keyboards)]; \
+       ++kbd)
+
+static void close_keyboard(struct keyboard* keyboard)
 {
-  int event_fd = open(path, O_RDONLY | O_NONBLOCK);
-  if (event_fd == -1) {
-    ERROR("Couldn't open %s: %s", path, strerror(errno));
-    return NULL;
+  if (keyboard->inode > 0) {
+    DEBUG("ino=%ju", (uintmax_t)keyboard->inode);
   }
 
-  struct libevdev* evdev;
-  int rc = libevdev_new_from_fd(event_fd, &evdev);
-  if (rc < 0) {
-    ERROR("Couldn't initialize from fd (%s): %s", path, strerror(-rc));
-    close(event_fd);
-    return NULL;
-  }
-
-  return evdev;
-}
-
-bool is_keyboard_event_device(const struct libevdev* evdev, bool require_led)
-{
-  return evdev && libevdev_has_event_type(evdev, EV_KEY)
-         && (!require_led || libevdev_has_event_type(evdev, EV_LED))
-         && libevdev_has_event_code(evdev, EV_KEY, KEY_CAPSLOCK);
-}
-
-struct libevdev* find_keyboard_device(void)
-{
-  for (size_t i = 0; i <= 999; i++) {
-    char path[sizeof("/dev/input/event999")];
-    snprintf(path, sizeof(path), "/dev/input/event%zd", i);
-    if (access(path, F_OK) != 0) {
-      break;  // Most likely no more event devices
+  if (keyboard->dev) {
+    if (keyboard->state.grabbed) {
+      libevdev_grab(keyboard->dev, LIBEVDEV_UNGRAB);
     }
+    close(libevdev_get_fd(keyboard->dev));
+    libevdev_free(keyboard->dev);
+  }
+  if (keyboard->uinput_dev) {
+    libevdev_uinput_destroy(keyboard->uinput_dev);
+  }
 
-    struct libevdev* evdev = open_device(path);
-    if (!evdev) {
+  if (keyboard->event_fd >= 0) {
+    close(keyboard->event_fd);
+  }
+
+  memset(keyboard, 0, sizeof(*keyboard));
+  keyboard->event_fd = -1;
+}
+
+static bool init_capsule(void)
+{
+  capsule.inotify_fd = -1;
+  capsule.inotify_wd = -1;
+
+  FOR_EACH_KEYBOARD(keyboard) { close_keyboard(keyboard); }
+
+  capsule.dev_dirp = opendir(INPUT_DEVICE_PATH);
+  if (!capsule.dev_dirp) {
+    ERROR("Couldn't open " INPUT_DEVICE_PATH ": %s", strerror(errno));
+    return false;
+  }
+
+  capsule.inotify_fd = inotify_init1(O_NONBLOCK);
+  if (capsule.inotify_fd == -1) {
+    ERROR("Couldn't open inotify fd: %s", strerror(errno));
+    return false;
+  }
+
+  capsule.inotify_wd =
+      inotify_add_watch(capsule.inotify_fd, INPUT_DEVICE_PATH, IN_CREATE | IN_DELETE);
+  if (capsule.inotify_wd == -1) {
+    ERROR("inotify_add_watch failed: %s", strerror(errno));
+    return false;
+  }
+
+  return true;
+}
+
+static struct keyboard* find_keyboard_by_inode(ino_t inode)
+{
+  FOR_EACH_KEYBOARD(keyboard)
+  {
+    if (keyboard->inode == inode) {
+      return keyboard;
+    }
+  }
+  return NULL;
+}
+
+static struct keyboard* find_free_keyboard_struct(void)
+{
+  FOR_EACH_KEYBOARD(keyboard)
+  {
+    if (!keyboard->dev) {
+      assert(!keyboard->uinput_dev);
+      return keyboard;
+    }
+  }
+  return NULL;
+}
+
+static bool setup_keyboard(struct keyboard* keyboard, DIR* base_dirp, struct dirent* dirent)
+{
+  DEBUG("%s (ino=%ju)", dirent->d_name, (uintmax_t)dirent->d_ino);
+  keyboard->event_fd = openat(dirfd(base_dirp), dirent->d_name, O_RDONLY | O_NONBLOCK);
+  if (keyboard->event_fd == -1) {
+    ERROR("Couldn't open %s: %s", dirent->d_name, strerror(errno));
+    goto done;
+  }
+
+  keyboard->dev = libevdev_new();
+  assert(keyboard->dev);  // Weird enough that it's worth getting a crash to know
+
+  if (log_level == LOG_LEVEL_DEBUG) {
+    // TODO: Implement installing of libevdev log callbacks here
+  }
+
+  keyboard->inode = dirent->d_ino;
+
+  if (libevdev_set_fd(keyboard->dev, keyboard->event_fd) < 0) {
+    ERROR("Couldn't set fd for device %s", dirent->d_name);
+    goto done;
+  }
+
+  if (libevdev_uinput_create_from_device(
+          keyboard->dev, LIBEVDEV_UINPUT_OPEN_MANAGED, &keyboard->uinput_dev)
+      != 0) {
+    ERROR("Failed creating uinput device");
+  }
+
+done:
+  if (!keyboard->uinput_dev) {
+    close_keyboard(keyboard);
+  }
+
+  return keyboard->uinput_dev;
+}
+
+static bool scan_keyboards(void)
+{
+  FOR_EACH_KEYBOARD(keyboard) { keyboard->state.marked_for_deletion = (keyboard->dev != NULL); }
+
+  rewinddir(capsule.dev_dirp);
+
+  struct dirent* dirent;
+  while ((dirent = readdir(capsule.dev_dirp))) {
+    DEBUG("%s", dirent->d_name);
+    if (!strstr(dirent->d_name, "event-kbd")) {
       continue;
     }
 
-    const bool require_led = true;
-    if (is_keyboard_event_device(evdev, require_led)) {
-      DEBUG("Found candidate: %s", path);
-      return evdev;
+    struct keyboard* keyboard = find_keyboard_by_inode(dirent->d_ino);
+    if (keyboard) {
+      keyboard->state.marked_for_deletion = false;
+      continue;
     }
 
-    close(libevdev_get_fd(evdev));
-    libevdev_free(evdev);
+    keyboard = find_free_keyboard_struct();
+    assert(keyboard);
+
+    if (!setup_keyboard(keyboard, capsule.dev_dirp, dirent)) {
+      ERROR("Couldn't set-up keyboard %s", dirent->d_name);
+    }
   }
 
-  return NULL;
+  size_t num_keyboards_setup = 0;
+  FOR_EACH_KEYBOARD(keyboard)
+  {
+    if (keyboard->state.marked_for_deletion) {
+      close_keyboard(keyboard);
+    }
+    else {
+      keyboard->state.marked_for_deletion = false;
+    }
+    num_keyboards_setup += (keyboard->dev != NULL);
+  }
+
+  return num_keyboards_setup > 0;
 }
 
 static void write_event_to_uinput(struct libevdev_uinput* uinput_dev,
@@ -116,14 +250,14 @@ static void write_event_to_uinput(struct libevdev_uinput* uinput_dev,
                                   unsigned int code,
                                   int value)
 {
-  DEBUG("    W Event: %s %s %d",
+  DEBUG("W Event: %s %s %d",
         libevdev_event_type_get_name(type),
         libevdev_event_code_get_name(type, code),
         value);
   libevdev_uinput_write_event(uinput_dev, type, code, value);
 }
 
-static void handle_event(struct libevdev_uinput* uinput_dev, struct input_event* ev)
+static void handle_input_event(struct keyboard* keyboard, struct input_event* ev)
 {
   if (ev->type != EV_KEY) {
     goto forward_event;
@@ -134,19 +268,19 @@ static void handle_event(struct libevdev_uinput* uinput_dev, struct input_event*
       return;
     }
     else if (ev->value == 1) {
-      kbd_state.caps_lock_pressed = true;
-      kbd_state.key_pressed_while_caps_lock_pressed = false;
+      keyboard->state.caps_lock_pressed = true;
+      keyboard->state.key_pressed_while_caps_lock_pressed = false;
       return;
     }
 
-    kbd_state.caps_lock_pressed = false;
-    if (kbd_state.key_pressed_while_caps_lock_pressed) {
+    keyboard->state.caps_lock_pressed = false;
+    if (keyboard->state.key_pressed_while_caps_lock_pressed) {
       return;
     }
 
     // We want to activate caps-lock, since no other key was pressed while it was held down
-    write_event_to_uinput(uinput_dev, EV_KEY, KEY_CAPSLOCK, 1);
-    write_event_to_uinput(uinput_dev, EV_KEY, EV_SYN, 0);
+    write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_CAPSLOCK, 1);
+    write_event_to_uinput(keyboard->uinput_dev, EV_KEY, EV_SYN, 0);
     // ... and then we simply forward the deactivation
   }
   else {
@@ -156,40 +290,40 @@ static void handle_event(struct libevdev_uinput* uinput_dev, struct input_event*
       }
 
       // From this line on, we have a match, but first handle some cases where we back off
-      if (ev->value == 1 && !kbd_state.caps_lock_pressed) {
+      if (ev->value == 1 && !keyboard->state.caps_lock_pressed) {
         goto forward_event;  // Key was pressed "normally", without caps lock held in
       }
 
-      if (ev->value != 1 && !kbd_state.action_table_activated[i]) {
+      if (ev->value != 1 && !keyboard->state.action_table_activated[i]) {
         goto forward_event;  // Key was pressed while caps lock wasn't held, so treat normally
       }
 
       // From here on, we know we should do something
       if (action_table[i].output.right_alt && ev->value <= 1) {
-        write_event_to_uinput(uinput_dev, EV_KEY, KEY_RIGHTALT, ev->value);
+        write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_RIGHTALT, ev->value);
       }
       if (action_table[i].output.left_ctrl && ev->value <= 1) {
-        write_event_to_uinput(uinput_dev, EV_KEY, KEY_LEFTCTRL, ev->value);
+        write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_LEFTCTRL, ev->value);
       }
-      write_event_to_uinput(uinput_dev, EV_KEY, action_table[i].output.code, ev->value);
+      write_event_to_uinput(keyboard->uinput_dev, EV_KEY, action_table[i].output.code, ev->value);
 
       // Something was done, and that's worth book keeping
       if (ev->value <= 1) {
-        const bool activated = (ev->value == 1 && kbd_state.caps_lock_pressed);
-        kbd_state.action_table_activated[i] = activated;
-        kbd_state.key_pressed_while_caps_lock_pressed |= activated;
+        const bool activated = (ev->value == 1 && keyboard->state.caps_lock_pressed);
+        keyboard->state.action_table_activated[i] = activated;
+        keyboard->state.key_pressed_while_caps_lock_pressed |= activated;
       }
 
       return;
     }
 
-    if (kbd_state.caps_lock_pressed) {
-      kbd_state.key_pressed_while_caps_lock_pressed |= ev->value == 1;
+    if (keyboard->state.caps_lock_pressed) {
+      keyboard->state.key_pressed_while_caps_lock_pressed |= ev->value == 1;
     }
   }
 
 forward_event:
-  write_event_to_uinput(uinput_dev, ev->type, ev->code, ev->value);
+  write_event_to_uinput(keyboard->uinput_dev, ev->type, ev->code, ev->value);
 }
 
 static bool is_killswitch_active(const struct libevdev* evdev)
@@ -198,57 +332,136 @@ static bool is_killswitch_active(const struct libevdev* evdev)
          && libevdev_get_event_value(evdev, EV_KEY, KEY_RIGHTCTRL) > 0;
 }
 
-static bool run_event_loop(struct libevdev* evdev)
+static void drain_inotify_events(void)
 {
-  // Creates our virtual keyboard
-  struct libevdev_uinput* uinput_dev;
-  if (libevdev_uinput_create_from_device(evdev, LIBEVDEV_UINPUT_OPEN_MANAGED, &uinput_dev) != 0) {
-    ERROR("Failed creating uinput device");
-    return false;
-  }
+  DEBUG();
+  for (;;) {
+    // As recommended in man inotify(7):
+    char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+    ssize_t len = read(capsule.inotify_fd, buf, ARRAY_SIZE(buf));
+    if (len <= 0) {
+      if (errno != EAGAIN) {
+        ERROR("read() gave error %s", strerror(errno));
+      }
+      break;
+    }
 
-  // Give X11/Wayland "some time" to find our newly created uinput device
+    // We're not really interested in handling the exact events; we just want to know when it's time
+    // to rescan our watched directory (and thus the name of this method)
+  }
+}
+
+static size_t construct_pollfd_array(struct pollfd* pfds, size_t pfds_size)
+{
+  *pfds++ = (struct pollfd){.fd = capsule.inotify_fd, .events = POLLIN};
+  pfds_size--;
+
+  size_t remaining = pfds_size;
+  FOR_EACH_KEYBOARD(keyboard)
+  {
+    if (remaining == 0) {
+      ERROR("Bad sizing of pollfd array");
+      break;
+    }
+
+    const int fd = keyboard->dev ? libevdev_get_fd(keyboard->dev) : -1;
+    *pfds++ = (struct pollfd){.fd = fd, .events = POLLIN};
+    --remaining;
+  }
+  return pfds_size - remaining;
+}
+
+struct keyboard* get_keyboard_from_pollfd(struct pollfd* pollfd_array, struct pollfd* pfd)
+{
+  return &capsule.keyboards[(pfd - pollfd_array) - 1];
+}
+
+static bool handle_keyboard_evdev_event(struct keyboard* keyboard)
+{
+  int rc;
+  do {
+    // Internally, libevdev caches events
+    struct input_event ev;
+    rc = libevdev_next_event(keyboard->dev, LIBEVDEV_READ_FLAG_NORMAL, &ev);
+    if (rc == 0) {
+      DEBUG("R Event: %s %s %d",
+            libevdev_event_type_get_name(ev.type),
+            libevdev_event_code_get_name(ev.type, ev.code),
+            ev.value);
+
+      if (is_killswitch_active(keyboard->dev)) {
+        ERROR("KILLSWITCH detected; exiting\n");
+        return false;
+      }
+
+      handle_input_event(keyboard, &ev);
+    }
+    else if (rc == -ENODEV) {
+      DEBUG("No device; it will probably be removed soon");
+      break;
+    }
+    else if (rc != -EAGAIN) {
+      ERROR("next_event: Got %s", strerror(-rc));
+    }
+  } while (rc == LIBEVDEV_READ_STATUS_SUCCESS);
+
+  return true;
+}
+
+static void grab_all_keyboards(void)
+{
+  // Grab devices to remove duplicate events (i.e., 1 from real device + 1 from virtual device)
+  FOR_EACH_KEYBOARD(keyboard)
+  {
+    if (keyboard->dev && !keyboard->state.grabbed) {
+      keyboard->state.grabbed = libevdev_grab(keyboard->dev, LIBEVDEV_GRAB) == 0;
+    }
+  }
+}
+
+static void run_event_loop(void)
+{
+  // Unfortunate, but give X11/Wayland "some time" to find our newly created uinput devices
   usleep(500 * 1000);
 
-  // To remove duplicate events (i.e., 1 from real device + 1 from virtual device)
-  libevdev_grab(evdev, LIBEVDEV_GRAB);
+  grab_all_keyboards();
 
-  struct pollfd fds[] = {{.fd = libevdev_get_fd(evdev), .events = POLLIN}};
+  struct pollfd pollfd_array[POLLFDS_MAX_NUM_FDS];
+  size_t num_fds = construct_pollfd_array(pollfd_array, ARRAY_SIZE(pollfd_array));
 
-  int rc = -1;
-  while (poll(&fds[0], ARRAY_SIZE(fds), -1) > 0) {
+  int events_to_handle = -1;  // -1 = any number, >= 0 = as many before exiting
+  while (poll(pollfd_array, num_fds, -1) > 0) {
+    if (pollfd_array[0].revents & POLLIN) {
+      drain_inotify_events();
+      scan_keyboards();
+      grab_all_keyboards();
+      num_fds = construct_pollfd_array(pollfd_array, ARRAY_SIZE(pollfd_array));
+      continue;
+    }
+
+    struct pollfd* keyboard_pollfd = &pollfd_array[1];
     do {
-      // Internally, libevdev caches events
-      struct input_event ev;
-      rc = libevdev_next_event(evdev, LIBEVDEV_READ_FLAG_NORMAL, &ev);
-      if (rc == 0) {
-        DEBUG("   R  Event: %s %s %d",
-              libevdev_event_type_get_name(ev.type),
-              libevdev_event_code_get_name(ev.type, ev.code),
-              ev.value);
-
-        if (is_killswitch_active(evdev)) {
-          ERROR("KILLSWITCH detected; exiting\n");
-          goto done;
-        }
-
-        handle_event(uinput_dev, &ev);
+      struct keyboard* keyboard = get_keyboard_from_pollfd(pollfd_array, keyboard_pollfd);
+      if (keyboard_pollfd->revents & POLLERR) {
+        close_keyboard(keyboard);
+        num_fds = construct_pollfd_array(pollfd_array, ARRAY_SIZE(pollfd_array));
+        break;
       }
-      else if (rc == -ENODEV) {
-        // TODO: Happens when we disconnect keyboard. Best we can do for now is just to break
-        ERROR("Hot-plugging support not implemented; exiting");
+      if (!(keyboard_pollfd->revents & POLLIN)) {
+        continue;
+      }
+
+      if (!handle_keyboard_evdev_event(keyboard)) {
         goto done;
       }
-      else if (rc != -EAGAIN) {
-        ERROR("next_event: Got %s", strerror(-rc));
-      }
-    } while (rc == LIBEVDEV_READ_STATUS_SUCCESS);
+    } while (++keyboard_pollfd != &pollfd_array[ARRAY_SIZE(pollfd_array)]);
+
+    if (events_to_handle >= 0 && --events_to_handle == -1)
+      break;
   }
 
 done:
-  libevdev_grab(evdev, LIBEVDEV_UNGRAB);
-  libevdev_uinput_destroy(uinput_dev);
-  return rc == LIBEVDEV_READ_STATUS_SUCCESS;
+  (void)0;  // Makes clang happy
 }
 
 static void print_usage(void)
@@ -270,22 +483,23 @@ int main(int argc, char* argv[])
     argv++;
   }
 
-  const bool require_led = false;
-  struct libevdev* evdev = (argc > 1) ? open_device(argv[1]) : find_keyboard_device();
-  if (!is_keyboard_event_device(evdev, require_led)) {
-    ERROR("Found no valid keyboard device, please supply one yourself as arg");
+  if (!init_capsule()) {
     goto done;
   }
 
-  if (!run_event_loop(evdev)) {
-    ERROR("Couldn't relay keypresses for some reason, exiting");
+  if (!scan_keyboards()) {
+    WARNING("Found no keyboards connected; this is probably a bug");
+    goto done;
   }
 
+  run_event_loop();
+
 done:
-  if (evdev && libevdev_get_fd(evdev) != -1) {
-    close(libevdev_get_fd(evdev));
+  FOR_EACH_KEYBOARD(keyboard) { close_keyboard(keyboard); }
+
+  if (capsule.dev_dirp) {
+    closedir(capsule.dev_dirp);
   }
-  libevdev_free(evdev);
 
   return -1;  // Can't get here without something being wrong
 }
