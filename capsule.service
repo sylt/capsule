@@ -1,0 +1,9 @@
+[Unit]
+Description=Capsule service
+
+[Service]
+Type=simple
+ExecStart=/home/dinho/bin/capsule
+
+[Install]
+WantedBy=default.target

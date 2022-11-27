@@ -48,6 +48,13 @@ input device (e.g. /dev/input/event4) by passing it as an argument to
 CAPSULE. This might be needed if you have multiple keyboards, and the
 wrong one is picked.
 
+# Installing in systemd
+
+1. Copy `capsule.service` file to `/lib/systemd/system/`.
+2. Try and start to see if it work: `sudo systemctl start capsule`.
+3. Then, enable it by default: `sudo systemctl enable capsule`.
+4. Done. At next start-up, capsule will start automatically.
+
 # Missing functionality
 
 Lots, but on top of my mind:
