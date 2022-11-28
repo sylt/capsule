@@ -190,15 +190,16 @@ static bool setup_keyboard(struct keyboard* keyboard, DIR* base_dirp, struct dir
 
   keyboard->inode = dirent->d_ino;
 
-  if (libevdev_set_fd(keyboard->dev, keyboard->event_fd) < 0) {
-    ERROR("Couldn't set fd for device %s", dirent->d_name);
+  int rc = libevdev_set_fd(keyboard->dev, keyboard->event_fd);
+  if (rc < 0) {
+    ERROR("Couldn't set fd for device %s: %s", dirent->d_name, strerror(-rc));
     goto done;
   }
 
-  if (libevdev_uinput_create_from_device(
-          keyboard->dev, LIBEVDEV_UINPUT_OPEN_MANAGED, &keyboard->uinput_dev)
-      != 0) {
-    ERROR("Failed creating uinput device");
+  rc = libevdev_uinput_create_from_device(
+      keyboard->dev, LIBEVDEV_UINPUT_OPEN_MANAGED, &keyboard->uinput_dev);
+  if (rc < 0) {
+    ERROR("Failed creating uinput device: %s", strerror(-rc));
   }
 
 done:
