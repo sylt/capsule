@@ -24,6 +24,9 @@ having only some hard-coded aliases. These aliases are:
 |     |             |
 | D   | Delete      |
 |     |             |
+| A   | Home        |
+| E   | End         |
+|     |             |
 | N   | PageDown    |
 | P   | PageUp      |
 

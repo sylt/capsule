@@ -47,8 +47,12 @@ static const struct {
     {.code = KEY_P, .output = {.code = KEY_PAGEUP}},
     {.code = KEY_N, .output = {.code = KEY_PAGEDOWN}},
 
-    // Remap D to be Delete key
+    // Remap D to Delete
     {.code = KEY_D, .output = {.code = KEY_DELETE}},
+
+    // Remap A and E to Home and End
+    {.code = KEY_A, .output = {.code = KEY_HOME}},
+    {.code = KEY_E, .output = {.code = KEY_END}},
 
     // Remap Y and O to produce { and } with Swedish keyboard layout
     {.code = KEY_Y, .output = {.code = KEY_7, .right_alt = true}},
