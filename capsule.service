@@ -3,7 +3,7 @@ Description=Capsule service
 
 [Service]
 Type=simple
-ExecStart=/home/dinho/bin/capsule
+ExecStart=/usr/sbin/capsule
 
 [Install]
 WantedBy=default.target
