@@ -57,9 +57,17 @@ detected when plugged in.
 # Installing in systemd
 
 1. Copy `capsule.service` file to `/lib/systemd/system/`.
-2. Try and start to see if it work: `sudo systemctl start capsule`.
-3. Then, enable it by default: `sudo systemctl enable capsule`.
-4. Done. At next start-up, capsule will start automatically.
+2. Copy `capsule` binary to `/usr/sbin/capsule`.
+3. Try and start to see if it work: `sudo systemctl start capsule`.
+4. Then, enable it by default: `sudo systemctl enable capsule`.
+5. Done. At next start-up, capsule will start automatically.
+
+# Killswitch
+
+Although CAPSULE has been tested, it should still be considered
+unstable software at the moment. In case the keyboard starts behave
+weird in such a way that nothing seems to work, it's possible to quit
+CAPSULE by holding down both left and right control at the same time.
 
 # Missing functionality
 
