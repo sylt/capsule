@@ -53,14 +53,6 @@ static const struct {
     // Remap A and E to Home and End
     {.code = KEY_A, .output = {.code = KEY_HOME}},
     {.code = KEY_E, .output = {.code = KEY_END}},
-
-    // Remap Y and O to produce { and } with Swedish keyboard layout
-    {.code = KEY_Y, .output = {.code = KEY_7, .right_alt = true}},
-    {.code = KEY_O, .output = {.code = KEY_0, .right_alt = true}},
-
-    // Remap U and I to produce [ and ] with Swedish keyboard layout
-    {.code = KEY_U, .output = {.code = KEY_8, .right_alt = true}},
-    {.code = KEY_I, .output = {.code = KEY_9, .right_alt = true}},
 };
 
 static struct {
