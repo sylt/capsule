@@ -1,4 +1,4 @@
-# CAPSULE: Dual function Caps-Lock key
+# CAPSULE: Dual function Caps-Lock key for Linux
 
 CAPSULE tries to provide a better default behavior in Linux for the
 Caps Lock key. Since Caps Lock is fitted at a rather "ergonomical"
@@ -33,7 +33,8 @@ having only some hard-coded aliases. These aliases are:
 CAPSULE injects itself at a very low level of the Linux input
 stack. Due to this, the keyboard shortcuts are global, meaning that
 you can use them from whatever application without any extra set up:
-Your browser, your editor, or your chat program.
+Your browser, your editor, or your chat program; it even works in the
+virtual terminal (Ctrl + Alt + F1, etc).
 
 It should be noted that CAPSULE works the same when holding down say
 the Control or Alt key. So, for example, if you hold down the Caps
@@ -42,8 +43,7 @@ result as pressing Alt + Arrow Right. This is a feature.
 
 Swapping of the Escape and Caps Lock key is possible by using the
 switch `--swap-caps-lock-and-escape`. This means that pressing only
-Caps Lock on the keyboard will make it behave as if Escape was
-pressed.
+Caps Lock will make it behave as if Escape was pressed.
 
 # How to compile and run
 
@@ -75,3 +75,5 @@ Lots, but on top of my mind:
 
 * Config file support - Can't keep it hard-coded forever
 * Different keyboard combos per user? Not sure how to even tackle this.
+* Debian package
+* Security: Run as group input + create capsule user + udev rule?
