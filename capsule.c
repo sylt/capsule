@@ -463,8 +463,7 @@ static void run_event_loop(void)
       break;
   }
 
-done:
-  (void)0;  // Makes clang happy
+done:;
 }
 
 static void print_usage(void)
