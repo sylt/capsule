@@ -69,8 +69,6 @@ static struct {
 
       bool key_pressed_while_caps_lock_pressed;
       bool action_table_activated[ARRAY_SIZE(action_table)];
-
-      bool marked_for_deletion;  // Used for detecting when keyboard has been unplugged
     } state;
 
     ino_t inode;
@@ -204,8 +202,10 @@ done:
 
 static bool scan_keyboards(void)
 {
+  bool marked_for_deletion[ARRAY_SIZE(capsule.keyboards)] = {false};
+
   FOR_EACH_KEYBOARD (keyboard) {
-    keyboard->state.marked_for_deletion = (keyboard->dev != NULL);
+    marked_for_deletion[keyboard - capsule.keyboards] = (keyboard->dev != NULL);
   }
 
   rewinddir(capsule.dev_dirp);
@@ -219,7 +219,7 @@ static bool scan_keyboards(void)
 
     struct keyboard* keyboard = find_keyboard_by_inode(dirent->d_ino);
     if (keyboard) {
-      keyboard->state.marked_for_deletion = false;
+      marked_for_deletion[keyboard - capsule.keyboards] = false;
       continue;
     }
 
@@ -233,11 +233,8 @@ static bool scan_keyboards(void)
 
   size_t num_keyboards_setup = 0;
   FOR_EACH_KEYBOARD (keyboard) {
-    if (keyboard->state.marked_for_deletion) {
+    if (marked_for_deletion[keyboard - capsule.keyboards]) {
       close_keyboard(keyboard);
-    }
-    else {
-      keyboard->state.marked_for_deletion = false;
     }
     num_keyboards_setup += (keyboard->dev != NULL);
   }
