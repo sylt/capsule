@@ -47,8 +47,12 @@ static const struct {
     {.code = KEY_P, .output = {.code = KEY_PAGEUP}},
     {.code = KEY_N, .output = {.code = KEY_PAGEDOWN}},
 
-    // Remap D to Delete
+    // Remap D to Delete and Semicolon (ö) to backspace
     {.code = KEY_D, .output = {.code = KEY_DELETE}},
+    {.code = KEY_SEMICOLON, .output = {.code = KEY_BACKSPACE}},
+
+    // Remap M to Enter
+    {.code = KEY_M, .output = {.code = KEY_ENTER}},
 
     // Remap A and E to Home and End
     {.code = KEY_A, .output = {.code = KEY_HOME}},
