@@ -282,6 +282,7 @@ static void handle_input_event(struct keyboard* keyboard, struct input_event* ev
 
   if (ev->code == KEY_CAPSLOCK) {
     if (ev->value > 1) {  // Key repeat
+      keyboard->state.key_pressed_while_caps_lock_pressed = true;
       return;
     }
     else if (ev->value == 1) {
