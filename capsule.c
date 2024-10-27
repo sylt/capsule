@@ -55,9 +55,19 @@ static const struct {
     // Remap M to Enter
     {.code = KEY_M, .output = {.code = KEY_ENTER}},
 
+    // Remap G to Tab
+    {.code = KEY_G, .output = {.code = KEY_TAB}},
+
     // Remap A and E to Home and End
     {.code = KEY_A, .output = {.code = KEY_HOME}},
     {.code = KEY_E, .output = {.code = KEY_END}},
+
+    // Remap '{', '}', '[', ']' and '/'
+    {.code = KEY_7, .output = {.code = KEY_7, .right_alt = true}},
+    {.code = KEY_0, .output = {.code = KEY_0, .right_alt = true}},
+    {.code = KEY_8, .output = {.code = KEY_8, .right_alt = true}},
+    {.code = KEY_9, .output = {.code = KEY_9, .right_alt = true}},
+    {.code = KEY_SLASH, .output = {.code = KEY_7, .shift = true}},
 };
 
 static struct {
