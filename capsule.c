@@ -32,6 +32,7 @@ static const struct {
   const uint16_t code;  // If Caps Lock is pressed, try match with this key code
   const struct {
     uint16_t code;
+    bool shift;
     bool left_alt;
     bool right_alt;
     bool left_ctrl;
@@ -311,6 +312,9 @@ static void handle_input_event(struct keyboard* keyboard, struct input_event* ev
     }
     if (action_table[i].output.left_ctrl && ev->value <= 1) {
       write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_LEFTCTRL, ev->value);
+    }
+    if (action_table[i].output.shift && ev->value <= 1) {
+      write_event_to_uinput(keyboard->uinput_dev, EV_KEY, KEY_LEFTSHIFT, ev->value);
     }
     write_event_to_uinput(keyboard->uinput_dev, EV_KEY, action_table[i].output.code, ev->value);
 
